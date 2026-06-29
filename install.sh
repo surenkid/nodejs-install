@@ -15,6 +15,12 @@ install_version=""
 NODEJS_OFFICIAL="https://nodejs.org/dist"
 NODEJS_MIRROR="https://mirrors.cloud.tencent.com/nodejs-release"
 
+# curl 超时: 连接 10s 内必须握上手, 避免某些网络"探测通但下载卡死"时无限挂起
+CURL_CONNECT_TIMEOUT="--connect-timeout 10"
+# 小文件 (index.json / SHASUMS) 总时长 30s, tarball 体积大给到 600s
+CURL_SMALL_MAXTIME="--max-time 30"
+CURL_LARGE_MAXTIME="--max-time 600"
+
 #######color code########
 red="31m"
 green="32m"
@@ -122,7 +128,7 @@ verify_sha256(){
     local version=$1
     local file_name=$2
     local shasum_file="SHASUMS256.txt"
-    if ! curl -s -L -o "$shasum_file" "$(dist_base_url)/$version/$shasum_file"; then
+    if ! curl -s -L $CURL_CONNECT_TIMEOUT $CURL_SMALL_MAXTIME -o "$shasum_file" "$(dist_base_url)/$version/$shasum_file"; then
         color_echo $yellow "警告: 无法下载校验文件 $shasum_file, 跳过完整性校验"
         return 1
     fi
@@ -146,7 +152,11 @@ install_nodejs(){
         [[ $latest == 0 ]] && echo "正在获取最新长期支持版nodejs..." || echo "正在获取最新当前发布版nodejs..."
         # 通过官方版本索引 dist/index.json 获取, 数组按版本号倒序排列
         # lts 字段为代号字符串(如 Krypton)的是 LTS 版, 为 false 的是 Current 版
-        all_version=`curl -s -H 'Cache-Control: no-cache' $(dist_base_url)/index.json`
+        all_version=`curl -s $CURL_CONNECT_TIMEOUT $CURL_SMALL_MAXTIME -H 'Cache-Control: no-cache' $(dist_base_url)/index.json`
+        if [[ -z "$all_version" ]]; then
+            color_echo $red "下载版本索引失败, 请检查网络连接 (超时或被墙)!"
+            exit 1
+        fi
         # 注意: 末尾的 grep -o 'v[0-9.]*' 会因 [0-9.]* 允许 0 次匹配而误取到 "version":" 后那个孤立的 v,
         # 导致 install_version 带换行、URL 拼接出错。这里要求 v 后至少 1 位数字 (v[0-9][0-9.]*)
         if [[ $latest == 0 ]]; then
@@ -167,7 +177,15 @@ install_nodejs(){
     fi
     base_name="node-$install_version-$vdis"
     file_name=`[[ "$arch" == *"darwin"* ]] && echo "$base_name.tar.gz" || echo "$base_name.tar.xz"`
-    curl -L $(dist_base_url)/$install_version/$file_name -o $file_name
+    # 下载二进制包: 加连接/总超时, 避免"探测通但 CDN 下载卡死"时无限挂起;
+    # -# 显示进度条, 让用户看到实时下载而非死等
+    echo "正在下载 $file_name ..."
+    if ! curl -L -# $CURL_CONNECT_TIMEOUT $CURL_LARGE_MAXTIME "$(dist_base_url)/$install_version/$file_name" -o "$file_name"; then
+        color_echo $red "下载 $file_name 失败! (连接超时/被墙或镜像源不可达)"
+        color_echo $yellow "可尝试: 1) 重新运行; 2) 检查网络/代理; 3) 指定其它源"
+        rm -rf "$file_name"
+        exit 1
+    fi
     # 下载后做 SHA256 完整性校验, 避免损坏的二进制被安装
     if verify_sha256 "$install_version" "$file_name"; then
         color_echo $green "完整性校验通过"
