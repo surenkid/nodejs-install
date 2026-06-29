@@ -11,10 +11,14 @@ force_mode=0
 
 install_version=""
 
+# 镜像源: 国内环境使用腾讯云, 海外使用官方源
+NODEJS_OFFICIAL="https://nodejs.org/dist"
+NODEJS_MIRROR="https://mirrors.cloud.tencent.com/nodejs-release"
+
 #######color code########
-red="31m"      
-green="32m"  
-yellow="33m" 
+red="31m"
+green="32m"
+yellow="33m"
 blue="36m"
 fuchsia="35m"
 
@@ -56,6 +60,20 @@ ip_is_connect(){
     fi
 }
 
+# 通过 HTTP 探测判断是否为国内网络环境(很多 CI 容器禁用了 ICMP, ping 不可靠)
+# 探测结果缓存, 同一次运行内只探测一次
+_is_china=""
+is_china_network(){
+    [[ -n "$_is_china" ]] && return $_is_china
+    # 用国内可达、海外通常不可达的域名做 HTTP 探测, 超时 3s
+    if curl -s -o /dev/null --max-time 3 https://mirrors.cloud.tencent.com/; then
+        _is_china=0
+    else
+        _is_china=1
+    fi
+    return $_is_china
+}
+
 check_sys() {
     #检查是否为Root
     [ $(id -u) != "0" ] && { color_echo ${red} "Error: You must be root to run this script"; exit 1; }
@@ -63,11 +81,19 @@ check_sys() {
     [[ -z `echo $PATH|grep /usr/local/bin` ]] && { echo 'export PATH=$PATH:/usr/local/bin' >> /etc/profile; source /etc/profile; }
 }
 
+# 根据网络环境选择 node 二进制下载源
+dist_base_url(){
+    if is_china_network; then
+        echo "$NODEJS_MIRROR"
+    else
+        echo "$NODEJS_OFFICIAL"
+    fi
+}
+
 setup_proxy(){
-    ip_is_connect "www.google.com"
-    if [[ ! $? -eq 0 && -z `npm config list|grep taobao` ]]; then
-        npm config set registry https://npmmirror.com
-        color_echo $green "当前网络环境为国内环境, 成功设置淘宝代理!"
+    if is_china_network && [[ -z `npm config list|grep -E 'mirrors.cloud.tencent'` ]]; then
+        npm config set registry https://mirrors.cloud.tencent.com/npm/
+        color_echo $green "当前网络环境为国内环境, 成功设置腾讯云npm源!"
     fi
 }
 
@@ -90,18 +116,45 @@ sys_arch(){
     fi
 }
 
+# 校验下载文件的 SHA256, 失败返回非 0
+# macOS 自带 shasum, Linux 通常有 sha256sum
+verify_sha256(){
+    local version=$1
+    local file_name=$2
+    local shasum_file="SHASUMS256.txt"
+    if ! curl -s -L -o "$shasum_file" "$(dist_base_url)/$version/$shasum_file"; then
+        color_echo $yellow "警告: 无法下载校验文件 $shasum_file, 跳过完整性校验"
+        return 1
+    fi
+    local expected
+    if command -v sha256sum &>/dev/null; then
+        expected=$(grep "  $file_name$" "$shasum_file" | awk '{print $1}')
+        [[ -z "$expected" ]] && { color_echo $yellow "警告: 校验文件中未找到 $file_name, 跳过完整性校验"; return 1; }
+        echo "$expected  $file_name" | sha256sum -c - &>/dev/null
+    elif command -v shasum &>/dev/null; then
+        expected=$(grep "  $file_name$" "$shasum_file" | awk '{print $1}')
+        [[ -z "$expected" ]] && { color_echo $yellow "警告: 校验文件中未找到 $file_name, 跳过完整性校验"; return 1; }
+        echo "$expected  $file_name" | shasum -a 256 -c - &>/dev/null
+    else
+        color_echo $yellow "警告: 未找到 sha256sum/shasum, 跳过完整性校验"
+        return 1
+    fi
+}
+
 install_nodejs(){
     if [[ -z $install_version ]];then
         [[ $latest == 0 ]] && echo "正在获取最新长期支持版nodejs..." || echo "正在获取最新当前发布版nodejs..."
-        all_version=`curl -s -L -H 'Cache-Control: no-cache' https://nodejs.org|grep downloadbutton`
+        # 通过官方版本索引 dist/index.json 获取, 数组按版本号倒序排列
+        # lts 字段为代号字符串(如 Krypton)的是 LTS 版, 为 false 的是 Current 版
+        all_version=`curl -s -H 'Cache-Control: no-cache' $(dist_base_url)/index.json`
         if [[ $latest == 0 ]]; then
-            install_version=`echo "$all_version"|sed -n '1p'|grep -oP 'v\d*\.\d\d*\.\d+'|head -n 1`
+            install_version=`echo "$all_version"|grep -v '"lts":false'|grep -o '"version":"v[0-9.]*"'|head -n 1|grep -o 'v[0-9.]*'`
         else
-            install_version=`echo "$all_version"|sed -n '2p'|grep -oP 'v\d*\.\d\d*\.\d+'|head -n 1`
+            install_version=`echo "$all_version"|grep '"lts":false'|grep -o '"version":"v[0-9.]*"'|head -n 1|grep -o 'v[0-9.]*'`
         fi
-        if [[ $install_version == "" ]];then
-            [[ $latest == 0 ]] && echo "获取最新长期支持版失败, 正在获取最新当前发布版.."
-            install_version=`curl -H 'Cache-Control: no-cache'  "https://api.github.com/repos/nodejs/node/releases/latest" | grep 'tag_name' | cut -d\" -f4`
+        if [[ -z $install_version ]];then
+            color_echo $red "获取最新版nodejs失败, 请检查网络连接!"
+            exit 1
         fi
         echo "最新版nodejs: `color_echo $blue $install_version`"
     fi
@@ -112,22 +165,38 @@ install_nodejs(){
     fi
     base_name="node-$install_version-$vdis"
     file_name=`[[ "$arch" == *"darwin"* ]] && echo "$base_name.tar.gz" || echo "$base_name.tar.xz"`
-    curl -L https://nodejs.org/dist/$install_version/$file_name -o $file_name
+    curl -L $(dist_base_url)/$install_version/$file_name -o $file_name
+    # 下载后做 SHA256 完整性校验, 避免损坏的二进制被安装
+    if verify_sha256 "$install_version" "$file_name"; then
+        color_echo $green "完整性校验通过"
+    else
+        # verify_sha256 内部已对"无校验工具/无校验文件"给出黄色警告, 这里只处理真正的校验不匹配
+        if [[ -f "$file_name" && `command -v sha256sum` || `command -v shasum` ]]; then
+            color_echo $red "下载文件完整性校验失败!"
+            rm -rf $base_name* $file_name SHASUMS256.txt
+            exit 1
+        fi
+    fi
     [[ "$arch" == *"darwin"* ]] && tar xzvf $file_name || tar xJvf $file_name
-    if [[ ! $? -eq 0 ]]; then 
+    if [[ ! $? -eq 0 ]]; then
         color_echo $red "下载安装失败!"
-        rm -rf $base_name*
+        rm -rf $base_name* $file_name SHASUMS256.txt
         exit 1
-    else 
+    else
         cp -rf $base_name/* /usr/local/
     fi
-    rm -rf $base_name*
+    rm -rf $base_name* $file_name SHASUMS256.txt
 }
 
 main(){
     check_sys
     sys_arch
     install_nodejs
+    # 安装后验证 node 可用, 避免 cp 成功但二进制损坏的极端情况
+    if ! `command -v node` >/dev/null 2>&1 || ! node -v >/dev/null 2>&1; then
+        color_echo $red "nodejs 安装完成但无法运行, 请检查系统架构或依赖!"
+        exit 1
+    fi
     setup_proxy
     echo -e "nodejs `color_echo $blue $install_version` 安装成功!"
 }
