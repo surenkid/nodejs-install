@@ -147,10 +147,12 @@ install_nodejs(){
         # 通过官方版本索引 dist/index.json 获取, 数组按版本号倒序排列
         # lts 字段为代号字符串(如 Krypton)的是 LTS 版, 为 false 的是 Current 版
         all_version=`curl -s -H 'Cache-Control: no-cache' $(dist_base_url)/index.json`
+        # 注意: 末尾的 grep -o 'v[0-9.]*' 会因 [0-9.]* 允许 0 次匹配而误取到 "version":" 后那个孤立的 v,
+        # 导致 install_version 带换行、URL 拼接出错。这里要求 v 后至少 1 位数字 (v[0-9][0-9.]*)
         if [[ $latest == 0 ]]; then
-            install_version=`echo "$all_version"|grep -v '"lts":false'|grep -o '"version":"v[0-9.]*"'|head -n 1|grep -o 'v[0-9.]*'`
+            install_version=`echo "$all_version"|grep -v '"lts":false'|grep -o '"version":"v[0-9][0-9.]*"'|head -n 1|grep -o 'v[0-9][0-9.]*'`
         else
-            install_version=`echo "$all_version"|grep '"lts":false'|grep -o '"version":"v[0-9.]*"'|head -n 1|grep -o 'v[0-9.]*'`
+            install_version=`echo "$all_version"|grep '"lts":false'|grep -o '"version":"v[0-9][0-9.]*"'|head -n 1|grep -o 'v[0-9][0-9.]*'`
         fi
         if [[ -z $install_version ]];then
             color_echo $red "获取最新版nodejs失败, 请检查网络连接!"
