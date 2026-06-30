@@ -68,14 +68,18 @@ ip_is_connect(){
 
 # 通过 HTTP 探测判断是否为国内网络环境(很多 CI 容器禁用了 ICMP, ping 不可靠)
 # 探测结果缓存, 同一次运行内只探测一次
+# 判断依据: google 在国内通常被墙, 海外可达。用 google 专为连通性探测设计的
+# generate_204 端点(连通返回 204 无 body, 被墙则连接失败), 超时 3s。
+# 之所以不用腾讯云首页判断: 腾讯云有海外 CDN, 国外也能访问其首页, 会误判为国内。
+# 约定(反直觉但勿改): 返回 0(成功)=国内, 返回 1(失败)=海外, 与调用方
+#   "if is_china_network; then 走国内镜像" 的 if 退出码判断一致。
 _is_china=""
 is_china_network(){
     [[ -n "$_is_china" ]] && return $_is_china
-    # 用国内可达、海外通常不可达的域名做 HTTP 探测, 超时 3s
-    if curl -s -o /dev/null --max-time 3 https://mirrors.cloud.tencent.com/; then
-        _is_china=0
+    if curl -s -o /dev/null --max-time 3 https://www.google.com/generate_204; then
+        _is_china=1   # google 可达 -> 海外
     else
-        _is_china=1
+        _is_china=0   # google 不可达 -> 国内
     fi
     return $_is_china
 }
