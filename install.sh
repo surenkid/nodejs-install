@@ -199,22 +199,19 @@ install_nodejs(){
             exit 1
         fi
     fi
-    # 解压: 去掉 -v, 避免打印数千个文件造成"刷屏+看似卡住"的错觉
-    echo "正在解压 $file_name ..."
-    if [[ "$arch" == *"darwin"* ]]; then
-        tar xzf $file_name
-    else
-        tar xJf $file_name
-    fi
-    if [[ ! $? -eq 0 ]]; then
-        color_echo $red "下载安装失败!"
-        rm -rf $base_name* $file_name SHASUMS256.txt
+    # 直接解压安装到 /usr/local (--strip-components=1 去掉包内顶层 node-xxx/ 目录)
+    # 不再用 "先解压到当前目录再 cp -rf": cp 会把 5000+ 文件再读+写一遍,
+    # 在慢盘/网络文件系统(如某些 VPS 的 /usr/local)上会逐文件卡住, 用户表现为
+    # 卡在 cp 这一步。tar -C 直装只做一次磁盘写, I/O 减半, 且无需后续 rm 解压目录。
+    echo "正在解压安装到 /usr/local/ ..."
+    local tar_flag="xJf"
+    [[ "$arch" == *"darwin"* ]] && tar_flag="xzf"
+    if ! tar $tar_flag "$file_name" -C /usr/local --strip-components=1; then
+        color_echo $red "解压安装失败!"
+        rm -rf "$file_name" SHASUMS256.txt
         exit 1
-    else
-        echo "正在安装到 /usr/local/ ..."
-        cp -rf $base_name/* /usr/local/
     fi
-    rm -rf $base_name* $file_name SHASUMS256.txt
+    rm -rf "$file_name" SHASUMS256.txt
 }
 
 main(){
