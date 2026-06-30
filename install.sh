@@ -233,6 +233,10 @@ main(){
     fi
     setup_proxy
     echo -e "nodejs `color_echo $blue $install_version` 安装成功!"
+    # 清掉当前 shell 的命令路径缓存, 避免装完立刻敲 node 仍走旧缓存路径
+    # (如 bash 记着旧版 /usr/bin/node, 报 No such file or directory)。
+    # 注意: 仅对 source <(...) 方式生效; bash <(...) 是子进程, 父 shell 需新开终端或手动 hash -r。
+    hash -r
 }
 
 main
