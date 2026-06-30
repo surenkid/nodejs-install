@@ -173,7 +173,9 @@ install_nodejs(){
         echo "最新版nodejs: `color_echo $blue $install_version`"
     fi
     if [[ $force_mode == 0 && `command -v node` ]];then
-        if [[ `node -v` == $install_version ]];then
+        # 用 timeout 包住 node -v: 上次安装被 Ctrl+C 打断可能残留损坏的半成品二进制,
+        # 直接执行 node -v 可能 hang 住(依赖缺失/二进制截断), 无超时会无限卡死
+        if [[ `timeout 10 node -v 2>/dev/null` == $install_version ]];then
             return
         fi
     fi
@@ -203,14 +205,17 @@ install_nodejs(){
     # 不再用 "先解压到当前目录再 cp -rf": cp 会把 5000+ 文件再读+写一遍,
     # 在慢盘/网络文件系统(如某些 VPS 的 /usr/local)上会逐文件卡住, 用户表现为
     # 卡在 cp 这一步。tar -C 直装只做一次磁盘写, I/O 减半, 且无需后续 rm 解压目录。
-    echo "正在解压安装到 /usr/local/ ..."
+    echo "正在解压安装到 /usr/local/ (慢机器上 xz 解压约需数十秒, 出现点号说明在进行中)..."
     local tar_flag="xJf"
     [[ "$arch" == *"darwin"* ]] && tar_flag="xzf"
-    if ! tar $tar_flag "$file_name" -C /usr/local --strip-components=1; then
+    # --checkpoint + dot: 解压时持续打点号, 让用户看到进展而非死等屏幕
+    if ! tar $tar_flag "$file_name" -C /usr/local --strip-components=1 --checkpoint=200 --checkpoint-action=dot 2>/dev/null; then
+        echo
         color_echo $red "解压安装失败!"
         rm -rf "$file_name" SHASUMS256.txt
         exit 1
     fi
+    echo " 完成"
     rm -rf "$file_name" SHASUMS256.txt
 }
 
@@ -219,7 +224,8 @@ main(){
     sys_arch
     install_nodejs
     # 安装后验证 node 可用, 避免 cp 成功但二进制损坏的极端情况
-    if ! `command -v node` >/dev/null 2>&1 || ! node -v >/dev/null 2>&1; then
+    # 同样用 timeout 包住, 防止损坏二进制 hang 住整个脚本
+    if ! `command -v node` >/dev/null 2>&1 || ! timeout 10 node -v >/dev/null 2>&1; then
         color_echo $red "nodejs 安装完成但无法运行, 请检查系统架构或依赖!"
         exit 1
     fi
