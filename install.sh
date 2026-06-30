@@ -172,7 +172,7 @@ install_nodejs(){
         fi
         echo "最新版nodejs: `color_echo $blue $install_version`"
     fi
-    if [[ $force_mode == 0 && `command -v node` ]];then
+    if [[ $force_mode == 0 ]] && command -v node >/dev/null 2>&1;then
         # 用 timeout 包住 node -v: 上次安装被 Ctrl+C 打断可能残留损坏的半成品二进制,
         # 直接执行 node -v 可能 hang 住(依赖缺失/二进制截断), 无超时会无限卡死
         if [[ `timeout 10 node -v 2>/dev/null` == $install_version ]];then
@@ -195,7 +195,7 @@ install_nodejs(){
         color_echo $green "完整性校验通过"
     else
         # verify_sha256 内部已对"无校验工具/无校验文件"给出黄色警告, 这里只处理真正的校验不匹配
-        if [[ -f "$file_name" && `command -v sha256sum` || `command -v shasum` ]]; then
+        if [[ -f "$file_name" ]] && { command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1; }; then
             color_echo $red "下载文件完整性校验失败!"
             rm -rf $base_name* $file_name SHASUMS256.txt
             exit 1
@@ -225,7 +225,9 @@ main(){
     install_nodejs
     # 安装后验证 node 可用, 避免 cp 成功但二进制损坏的极端情况
     # 同样用 timeout 包住, 防止损坏二进制 hang 住整个脚本
-    if ! `command -v node` >/dev/null 2>&1 || ! timeout 10 node -v >/dev/null 2>&1; then
+    # 注意: 不能写 `command -v node` (反引号), 那会把输出 /usr/local/bin/node 当命令执行,
+    # node 无参数会进 REPL 从 stdin 读输入, 在交互终端卡死。用 command -v 的退出码判断。
+    if ! command -v node >/dev/null 2>&1 || ! timeout 10 node -v >/dev/null 2>&1; then
         color_echo $red "nodejs 安装完成但无法运行, 请检查系统架构或依赖!"
         exit 1
     fi
