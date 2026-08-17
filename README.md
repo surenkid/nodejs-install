@@ -45,3 +45,17 @@ source <(curl -L https://raw.githubusercontent.com/surenkid/nodejs-install/maste
 - HTTP 探测识别网络环境, 兼容禁用 ICMP 的 CI 容器
 - 下载后 SHA256 完整性校验
 - 零外部依赖, 仅需 `curl` / `grep` / `awk`
+
+## CentOS 7.9 手动安装
+
+参考 [sbwml/node-latest-centos](https://github.com/sbwml/node-latest-centos) 二进制包安装方式:
+
+```bash
+wget https://gh-proxy.com/https://github.com/sbwml/node-latest-centos/releases/download/v24.18.0/node-v24.18.0-linux-x64.tar.gz
+tar xvzf node-v24.18.0-linux-x64.tar.gz
+mkdir -p /usr/local/lib/node_modules
+mv node-v24.18.0-linux-x64/lib/node_modules/npm /usr/local/lib/node_modules/npm
+mv node-v24.18.0-linux-x64/bin/node /usr/local/bin/node
+mv node-v24.18.0-linux-x64/bin/npm /usr/local/bin/npm
+mv node-v24.18.0-linux-x64/bin/npx /usr/local/bin/npx
+```
